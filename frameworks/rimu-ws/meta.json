@@ -1,0 +1,16 @@
+{
+  "display_name": "rimu-ws",
+  "language": "Rust",
+  "type": "experimental",
+  "mode": "tuned",
+  "engine": "io_uring",
+  "description": "rimu-ws - a fork of wtx running its WebSocket server framework on a thread-per-core io_uring executor: multishot accept and recv into a provided buffer ring, direct descriptors, frames echoed straight out of the receive buffer with one vectored send per batch, and a short busy-poll before a reactor sleeps.",
+  "repo": "https://github.com/vincentmele/rimu-ws",
+  "enabled": true,
+  "tests": [
+    "echo-ws",
+    "echo-ws-pipeline",
+    "echo-ws-limited"
+  ],
+  "maintainers": []
+}

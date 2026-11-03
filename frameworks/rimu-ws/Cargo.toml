@@ -1,0 +1,13 @@
+[package]
+name = "httparena-rimu-ws"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rimu-ws = { default-features = false, features = ["crypto-ring", "io-uring", "optimizations-std", "web-socket-server-framework"], git = "https://github.com/vincentmele/rimu-ws", rev = "cb88b26189f7cfb79c0887ce7d84c94d2b94dfb5" }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
