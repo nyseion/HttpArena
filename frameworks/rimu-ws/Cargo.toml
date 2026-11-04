@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rimu-ws = { default-features = false, features = ["crypto-ring", "io-uring", "optimizations-std", "web-socket-server-framework"], git = "https://github.com/vincentmele/rimu-ws", rev = "85cd234ec5c0e19d9c3e2dc3be788bda65fea02a" }
+rimu-ws = { default-features = false, features = ["crypto-ring", "io-uring", "optimizations-std", "web-socket-server-framework"], git = "https://github.com/vincentmele/rimu-ws", rev = "948d3ce260a4198e1754dd8f263f3b28ca043b76" }
 
 [profile.release]
 codegen-units = 1

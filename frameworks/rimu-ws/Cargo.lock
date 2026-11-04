@@ -113,7 +113,7 @@ dependencies = [
 [[package]]
 name = "rimu-ws"
 version = "0.52.1"
-source = "git+https://github.com/vincentmele/rimu-ws?rev=85cd234ec5c0e19d9c3e2dc3be788bda65fea02a#85cd234ec5c0e19d9c3e2dc3be788bda65fea02a"
+source = "git+https://github.com/vincentmele/rimu-ws?rev=948d3ce260a4198e1754dd8f263f3b28ca043b76#948d3ce260a4198e1754dd8f263f3b28ca043b76"
 dependencies = [
  "foldhash",
  "hashbrown",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "rimu-ws-macros"
 version = "0.12.1"
-source = "git+https://github.com/vincentmele/rimu-ws?rev=85cd234ec5c0e19d9c3e2dc3be788bda65fea02a#85cd234ec5c0e19d9c3e2dc3be788bda65fea02a"
+source = "git+https://github.com/vincentmele/rimu-ws?rev=948d3ce260a4198e1754dd8f263f3b28ca043b76#948d3ce260a4198e1754dd8f263f3b28ca043b76"
 dependencies = [
  "proc-macro2",
  "quote",
