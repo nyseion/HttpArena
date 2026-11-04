@@ -27,3 +27,4 @@ Environment variables, all optional:
 | `RIMU_DIRECT` | `16384` | Direct-descriptor table size per ring; `0` uses regular fds |
 | `RIMU_RINGS` | `4096,16384` | Submission and completion queue sizes |
 | `RIMU_NODELAY` | `1` | `TCP_NODELAY` on accepted sockets |
+| `RIMU_DEFER_ACCEPT` | `1` | `TCP_DEFER_ACCEPT` on the listeners (1 s) |

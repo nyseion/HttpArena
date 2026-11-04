@@ -20,12 +20,21 @@ fn main() -> rimu_ws::Result<()> {
     let nodelay = std::env::var("RIMU_NODELAY")
         .map(|v| v != "0")
         .unwrap_or(true);
+    let defer_accept = std::env::var("RIMU_DEFER_ACCEPT")
+        .map(|v| v != "0")
+        .unwrap_or(true);
     WebSocketServerFramework::new(
         UringExecutor::default(),
         ChaCha20::from_std_random()?,
         TlsConfig::plaintext(),
     )?
-    .set_tcp_params(TcpParams::default().set_tcp_nodelay(nodelay))
+    // Connections reach `accept` with their upgrade request already in, which saves a wakeup and a
+    // turn per connection (echo-ws-limited +1%). `RIMU_DEFER_ACCEPT=0` turns it off.
+    .set_tcp_params(
+        TcpParams::default()
+            .set_tcp_nodelay(nodelay)
+            .set_tcp_defer_accept(defer_accept.then_some(1)),
+    )
     .set_local_runtime_cb(|| {
         // Accept into direct descriptors, so closes are queued instead of making a syscall, and
         // busy-poll 20 us before sleeping. Each reactor shares its core with an SMT sibling, so a
