@@ -27,14 +27,16 @@ fn main() -> rimu_ws::Result<()> {
     )?
     .set_tcp_params(TcpParams::default().set_tcp_nodelay(nodelay))
     .set_local_runtime_cb(|| {
-        // Accept into direct descriptors, so closes are queued instead of making a syscall. No
-        // busy-poll by default: each reactor shares a core with its SMT sibling, and a spinning
-        // thread slows the busy one beside it (echo-ws-limited at 512 connections: 100 us of spin
-        // costs 3%, 0 and 20 us tie). `0` turns either off.
+        // Accept into direct descriptors, so closes are queued instead of making a syscall, and
+        // busy-poll 20 us before sleeping. Each reactor shares its core with an SMT sibling, so a
+        // long spin slows the busy thread beside it: on a 12-core Ryzen 100 us cost 3% on
+        // echo-ws-limited where 20 us tied no spin, and on a 16-core EPYC 20 us gained 1-2% there
+        // (it saves the sleep between reconnects). Neither spin moved the other profiles. `0`
+        // turns either off.
         let spin_us = std::env::var("RIMU_SPIN_US")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+            .unwrap_or(20);
         let direct = std::env::var("RIMU_DIRECT")
             .ok()
             .and_then(|v| v.parse().ok())
