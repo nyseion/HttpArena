@@ -1,9 +1,32 @@
+//! rimu-ws for HttpArena: a WebSocket echo server on 8080 (`/ws`) and an HTTP/2 server on 8082
+//! (h2c) and 8443 (h2 over TLS) with `/baseline2`, `/json/{count}` and `/static/{*file}`.
+//!
+//! Everything runs with the library defaults plus the settings `docs/production.md` of rimu-ws
+//! recommends for this deployment shape: the server has dedicated cores and its clients speak first.
+//! - Every listener: `TCP_DEFER_ACCEPT` (clients speak first).
+//! - The WebSocket runtimes spin 20 µs before sleeping (dedicated cores, clients that reconnect
+//!   often) and skip the peer-address lookup (no handler uses it). The HTTP/2 runtimes keep the
+//!   defaults: spin measured level there.
+//!
+//! Environment: `CERT_DIR` (default `/certs`, with `server.crt` and `server.key`), `DATASET_PATH`
+//! (default `/data/dataset.json`), `STATIC_DIR` (default `/data/static`).
+
+use core::ops::ControlFlow;
 use rimu_ws::{
-    collections::VectorUsize,
+    collections::{ArrayVectorU8, VectorUsize},
     executor::{UringExecutor, UringParams, UringRuntime, UringTcpStream},
-    http::WebSocketServerFramework,
+    http::{
+        Header, KnownHeaderName, MsgBufferString, MsgDataMut as _, Request, Response, StatusCode,
+        WebSocketServerFramework,
+        http2_server_framework::{
+            Get, Http2ServerFramework, HttpRouter, JsonReply, Middleware, Path, State,
+            StaticFiles, VerbatimParams, get,
+        },
+    },
+    misc::JsonWriter,
     net::TcpParams,
-    rng::{ChaCha20, CryptoSeedableRng},
+    rng::{ChaCha20, CryptoSeedableRng as _},
+    sync::Arc,
     tls::{PlaintextCtx, TlsConfig},
     web_socket::{
         Fill, OpCode, WebSocket, WebSocketCommonMut, WebSocketPayloadOrigin, WebSocketReaderMut,
@@ -16,56 +39,79 @@ type Common<'i> = WebSocketCommonMut<'i, (), UringTcpStream, PlaintextCtx, false
 type Reader<'i> = WebSocketReaderMut<'i, (), UringTcpStream, PlaintextCtx, false>;
 type Writer<'i> = WebSocketWriterMut<'i, (), UringTcpStream, PlaintextCtx, false>;
 
+macro_rules! router {
+    () => {
+        HttpRouter::new(
+            rimu_ws::paths!(
+                ("/baseline2", get(endpoint_baseline2)),
+                ("/json/{count}", get(endpoint_json)),
+                ("/static/{*file}", Get(StaticFiles::new(static_dir())?))
+            ),
+            ServerHeader,
+        )
+    };
+}
+
 fn main() -> rimu_ws::Result<()> {
-    let nodelay = std::env::var("RIMU_NODELAY")
-        .map(|v| v != "0")
-        .unwrap_or(true);
-    let defer_accept = std::env::var("RIMU_DEFER_ACCEPT")
-        .map(|v| v != "0")
-        .unwrap_or(true);
-    WebSocketServerFramework::new(
+    let ws = std::thread::spawn(|| -> rimu_ws::Result<()> {
+        WebSocketServerFramework::new(
+            UringExecutor::default(),
+            ChaCha20::from_std_random()?,
+            TlsConfig::plaintext(),
+        )?
+        .set_tcp_params(tcp_params())
+        .set_local_runtime_cb(|| {
+            UringRuntime::with_params(
+                UringParams::default()
+                    .set_peer_addrs(false)
+                    .set_spin(core::time::Duration::from_micros(20)),
+            )
+        })
+        .run_in_threads("0.0.0.0:8080", (("/ws", ws),))
+    });
+    let dataset = load_dataset();
+    let cert_dir = std::env::var("CERT_DIR").unwrap_or_else(|_| "/certs".into());
+    let tls = if std::path::Path::new(&cert_dir).join("server.crt").exists() {
+        let data = dataset.clone();
+        let cert = std::fs::read(format!("{cert_dir}/server.crt"))?;
+        let key = std::fs::read(format!("{cert_dir}/server.key"))?;
+        Some(std::thread::spawn(move || -> rimu_ws::Result<()> {
+            Http2ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+                UringExecutor::default(),
+                ChaCha20::from_std_random()?,
+                TlsConfig::from_keys_pem(&cert, key.as_slice())?,
+            )?
+            .set_data(ConnAux { dataset: data })
+            .set_tcp_params(tcp_params())
+            .run_in_threads("0.0.0.0:8443", router!()?)
+        }))
+    } else {
+        eprintln!("rimu-ws: no {cert_dir}/server.crt, TLS on 8443 disabled");
+        None
+    };
+    Http2ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
         UringExecutor::default(),
         ChaCha20::from_std_random()?,
         TlsConfig::plaintext(),
     )?
-    // Connections reach `accept` with their upgrade request already in, which saves a wakeup and a
-    // turn per connection (echo-ws-limited +1%). `RIMU_DEFER_ACCEPT=0` turns it off.
-    .set_tcp_params(
-        TcpParams::default()
-            .set_tcp_nodelay(nodelay)
-            .set_tcp_defer_accept(defer_accept.then_some(1)),
-    )
-    .set_local_runtime_cb(|| {
-        // Accept into direct descriptors, so closes are queued instead of making a syscall, and
-        // busy-poll 20 us before sleeping. Each reactor shares its core with an SMT sibling, so a
-        // long spin slows the busy thread beside it: on a 12-core Ryzen 100 us cost 3% on
-        // echo-ws-limited where 20 us tied no spin, and on a 16-core EPYC 20 us gained 1-2% there
-        // (it saves the sleep between reconnects). Neither spin moved the other profiles. `0`
-        // turns either off.
-        let spin_us = std::env::var("RIMU_SPIN_US")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(20);
-        let direct = std::env::var("RIMU_DIRECT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(16384);
-        // `RIMU_RINGS=sq,cq` overrides the ring sizes (smaller rings lock less memory).
-        let ring = std::env::var("RIMU_RINGS")
-            .ok()
-            .and_then(|v| {
-                let (sq, cq) = v.split_once(',')?;
-                Some((sq.parse().ok()?, cq.parse().ok()?))
-            })
-            .unwrap_or((4096, 16384));
-        let params = UringParams::new()
-            .set_direct_files(direct)
-            .set_peer_addrs(false)
-            .set_ring_entries(ring.0, ring.1)
-            .set_spin(std::time::Duration::from_micros(spin_us));
-        UringRuntime::with_params(params)
-    })
-    .run_in_threads("0.0.0.0:8080", (("/ws", ws),))
+    .set_data(ConnAux { dataset })
+    .set_tcp_params(tcp_params())
+    .run_in_threads("0.0.0.0:8082", router!()?)?;
+    if let Some(elem) = tls {
+        elem.join().map_err(|_| std::io::Error::other("TLS thread panicked"))??;
+    }
+    ws.join().map_err(|_| std::io::Error::other("WebSocket thread panicked"))??;
+    Ok(())
+}
+
+/// The defaults with `TCP_DEFER_ACCEPT`: every client here speaks first (an upgrade request or the
+/// HTTP/2 preface), so a connection reaches `accept` with its first bytes.
+fn tcp_params() -> TcpParams {
+    TcpParams::default().set_tcp_defer_accept(Some(1))
+}
+
+fn static_dir() -> String {
+    std::env::var("STATIC_DIR").unwrap_or_else(|_| "/data/static".into())
 }
 
 /// Echoes every frame that arrived with the last read, without awaiting.
@@ -120,4 +166,145 @@ async fn ws(mut buffer: VectorUsize<u8>, mut ws: LocalWebSocket) -> rimu_ws::Res
             _ => {}
         }
     }
+}
+
+/// Adds `server: rimu-ws` to every response.
+struct ServerHeader;
+
+impl Middleware<ConnAux, rimu_ws::Error> for ServerHeader {
+    type Aux = ();
+
+    fn aux(&self) -> Self::Aux {}
+
+    async fn req(
+        &self,
+        _: &mut ConnAux,
+        _: &mut Self::Aux,
+        _: &mut Request<MsgBufferString>,
+    ) -> rimu_ws::Result<ControlFlow<StatusCode, ()>> {
+        Ok(ControlFlow::Continue(()))
+    }
+
+    async fn res(
+        &self,
+        _: &mut ConnAux,
+        _: &mut Self::Aux,
+        res: Response<&mut MsgBufferString>,
+    ) -> rimu_ws::Result<ControlFlow<StatusCode, ()>> {
+        res
+            .msg_data
+            .headers
+            .push_from_iter(Header::from_name_and_value(KnownHeaderName::Server.into(), ["rimu-ws"]))?;
+        Ok(ControlFlow::Continue(()))
+    }
+}
+
+#[derive(Clone, rimu_ws::Lease)]
+struct ConnAux {
+    dataset: Arc<VectorUsize<DatasetItem>>,
+}
+
+async fn endpoint_baseline2(state: State<'_, ConnAux>) -> rimu_ws::Result<VerbatimParams> {
+    let mut sum: i64 = 0;
+    for (_, value) in state.req.msg_data.uri.query_params() {
+        sum = sum.wrapping_add(value.parse()?);
+    }
+    state.req.msg_data.clear();
+    std::io::Write::write_fmt(&mut state.req.msg_data.body, format_args!("{sum}"))?;
+    state.req.msg_data.headers.push_from_iter(Header::from_name_and_value(
+        KnownHeaderName::ContentType.into(),
+        ["text/plain"],
+    ))?;
+    Ok(VerbatimParams(StatusCode::Ok))
+}
+
+async fn endpoint_json(
+    state: State<'_, ConnAux>,
+    Path(count): Path<usize>,
+) -> rimu_ws::Result<JsonReply> {
+    let mut m: i64 = 1;
+    for (key, value) in state.req.msg_data.uri.query_params() {
+        if key == "m" {
+            m = value.parse()?;
+            break;
+        }
+    }
+    let dataset = &state.data.dataset;
+    state.req.msg_data.clear();
+    write_json(&mut state.req.msg_data.body, dataset, count, m)?;
+    Ok(JsonReply(StatusCode::Ok))
+}
+
+/// `{"items":[..],"count":n}` for the first `count` items, with `total = price * quantity * m`,
+/// serialized on every request. The dataset's numbers are integers (HttpArena made them so to keep
+/// float formatting out of the test) and are written as such.
+fn write_json(
+    buf: &mut VectorUsize<u8>,
+    dataset: &[DatasetItem],
+    count: usize,
+    m: i64,
+) -> rimu_ws::Result<()> {
+    let clamped = count.min(dataset.len());
+    let mut w = JsonWriter::new(buf);
+    // Every item and tag is written with a trailing comma; `end_seq` turns the last one into the
+    // closing bracket.
+    w.raw(b"{\"items\":[")?;
+    for el in dataset.iter().take(clamped) {
+        w.raw(b"{\"id\":")?;
+        w.i64(el.id)?;
+        w.raw(b",\"name\":\"")?;
+        w.str_contents(&el.name)?;
+        w.raw(b"\",\"category\":\"")?;
+        w.str_contents(&el.category)?;
+        w.raw(b"\",\"price\":")?;
+        w.i64(el.price)?;
+        w.raw(b",\"quantity\":")?;
+        w.i64(el.quantity)?;
+        w.raw(b",\"active\":")?;
+        w.bool(el.active)?;
+        w.raw(b",\"tags\":[")?;
+        for tag in el.tags.iter() {
+            w.raw(b"\"")?;
+            w.str_contents(tag)?;
+            w.raw(b"\",")?;
+        }
+        w.end_seq(b']')?;
+        w.raw(b",\"rating\":{\"score\":")?;
+        w.i64(el.rating.score)?;
+        w.raw(b",\"count\":")?;
+        w.i64(el.rating.count)?;
+        w.raw(b"},\"total\":")?;
+        w.i64(el.price.wrapping_mul(el.quantity).wrapping_mul(m))?;
+        w.raw(b"},")?;
+    }
+    w.end_seq(b']')?;
+    w.raw(b",\"count\":")?;
+    w.u64(u64::try_from(clamped).unwrap_or(u64::MAX))?;
+    w.raw(b"}")
+}
+
+fn load_dataset() -> Arc<VectorUsize<DatasetItem>> {
+    let path = std::env::var("DATASET_PATH").unwrap_or_else(|_| "/data/dataset.json".to_string());
+    Arc::new(match std::fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => VectorUsize::new(),
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct DatasetItem {
+    id: i64,
+    name: String,
+    category: String,
+    price: i64,
+    quantity: i64,
+    active: bool,
+    tags: ArrayVectorU8<String, 6>,
+    rating: Rating,
+}
+
+#[derive(serde::Deserialize)]
+struct Rating {
+    score: i64,
+    count: i64,
 }
