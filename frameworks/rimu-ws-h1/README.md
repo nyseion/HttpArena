@@ -22,7 +22,8 @@ request, by every `Accept-Encoding` line of the request: **gzip** (zlib level 6)
 brotli (quality 2), else none. gzip is preferred because, on this dataset, it produces a body about
 the size of brotli's at a fraction of the CPU, which wins the size-penalised json-comp score. Every
 response carries `Vary: Accept-Encoding`, and a request that refuses identity (`identity;q=0`, or
-`*;q=0`) while offering neither gzip nor brotli gets a 406. Nothing is cached. The TLS `/json` is
+`*;q=0`) while offering neither gzip nor brotli gets a 406; a `*` with a nonzero `q` offers the
+codings not listed, so `identity;q=0, *` is served gzip. Nothing is cached. The TLS `/json` is
 never compressed and has no `Vary`.
 
 ## I/O path
@@ -53,8 +54,9 @@ The library defaults, plus what rimu-ws's production guide recommends for client
 - **no spin**: the runtimes sleep as soon as their ring is empty, because the latency profiles
   charge spin to the score. The peer-address lookup is skipped (no handler uses it).
 
-Environment: `DATASET_PATH` (default `/data/dataset.json`) is the dataset `/json` serves, and
-`ARENA_LOG_ERRORS` prints the errors the server reports to stderr. There are no tuning variables.
+Environment: `DATASET_PATH` (default `/data/dataset.json`) is the dataset `/json` serves,
+`CERT_DIR` (default `/certs`) is the directory holding the TLS certificate and key, `server.crt` and
+`server.key`, and `ARENA_LOG_ERRORS` prints the errors the server reports to stderr. There are no tuning variables.
 The `Date` header is left out, which HTTP/1.1 allows for a server without a clock it can trust.
 
 ## Building
