@@ -1,0 +1,23 @@
+{
+  "display_name": "rimu-ws-h1",
+  "language": "Rust",
+  "type": "experimental",
+  "mode": "tuned",
+  "completeness": {
+    "routing": true,
+    "middleware": true,
+    "request": true,
+    "response": true
+  },
+  "engine": "io_uring",
+  "description": "rimu-ws - a fork of wtx on a thread-per-core io_uring executor (multishot accept and recv into a provided buffer ring). HTTP/1.1 through its Http1ServerFramework: a hand-written resumable request parser and body decoder (Content-Length and chunked) that answer straight out of the receive buffer, a path router with one handler per method, a server-header middleware, and the query parsed on every request. No spin: the runtimes sleep as soon as the ring is empty.",
+  "repo": "https://github.com/vincentmele/rimu-ws",
+  "enabled": true,
+  "tests": [
+    "baseline",
+    "limited-conn",
+    "latency-1m",
+    "latency-10k"
+  ],
+  "maintainers": []
+}

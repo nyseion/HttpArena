@@ -1,0 +1,14 @@
+[package]
+name = "httparena-rimu-ws-h1"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# A local copy of the rimu-ws sources, put in `rimu-ws/` by `local-src.sh`.
+rimu-ws = { default-features = false, features = ["http1-server-framework", "io-uring", "optimizations-std"], path = "rimu-ws/wtx" }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
