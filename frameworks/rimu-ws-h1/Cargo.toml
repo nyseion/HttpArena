@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 # A local copy of the rimu-ws sources, put in `rimu-ws/` by `local-src.sh`.
-rimu-ws = { default-features = false, features = ["http1-server-framework", "io-uring", "json-writer", "optimizations-std", "serde", "serde_json"], path = "rimu-ws/wtx" }
+rimu-ws = { default-features = false, features = ["crypto-ring", "http1-server-framework", "io-uring", "json-writer", "optimizations-std", "serde", "serde_json"], path = "rimu-ws/wtx" }
 brotli = { default-features = false, features = ["std"], version = "9.1" }
 serde = { default-features = false, features = ["derive"], version = "1.0" }
 serde_json = { default-features = false, features = ["alloc", "std"], version = "1.0" }

@@ -10,5 +10,6 @@ RUN RUSTFLAGS="-C target-cpu=native" cargo build --release
 
 FROM debian:bookworm-slim
 COPY --from=build /app/target/release/httparena-rimu-ws-h1 /server
-EXPOSE 8080
+# The harness mounts the certificate pair at /certs (server.crt, server.key); 8081 is the TLS listener.
+EXPOSE 8080 8081
 CMD ["/server"]
