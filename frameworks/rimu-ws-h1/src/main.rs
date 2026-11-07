@@ -15,7 +15,7 @@
 //! Environment: `ARENA_LOG_ERRORS` prints the errors the server reports to stderr; `DATASET_PATH`
 //! (default `/data/dataset.json`) is the dataset `/json` serves.
 
-use core::{cell::RefCell, time::Duration};
+use core::{cell::RefCell, num::NonZeroUsize, time::Duration};
 use rimu_ws::{
   collections::{ArrayVectorU8, VectorUsize},
   executor::{UringExecutor, UringParams, UringRuntime},
@@ -53,24 +53,23 @@ fn main() -> rimu_ws::Result<()> {
   let tls = if std::path::Path::new(&cert_dir).join("server.crt").exists() {
     let cert = std::fs::read(format!("{cert_dir}/server.crt"))?;
     let key = std::fs::read(format!("{cert_dir}/server.key"))?;
-    Some(std::thread::spawn(move || -> rimu_ws::Result<()> {
-      let tls_config = TlsConfig::from_keys_pem(&cert, key.as_slice())?;
-      let router = Http1Router::new()
-        .route(Some(Method::Get), "/json/{count}", endpoint_json_plain)
-        .route(Some(Method::Post), "/echo", endpoint_echo);
-      Http1ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new_tls(
-        UringExecutor::default(),
-        ChaCha20::from_std_random()?,
-        tls_config,
-      )?
-      .set_error_cb(error_cb)
-      .set_local_runtime_cb(runtime)
-      .run_in_threads("0.0.0.0:8081", router)
-    }))
+    Some(std::thread::spawn(move || serve_tls("0.0.0.0:8081", None, &cert, &key, runtime)))
   } else {
     eprintln!("arena-h1: no {cert_dir}/server.crt, TLS on 8081 disabled");
     None
   };
+  serve_plain("0.0.0.0:8080", None, runtime)?;
+  if let Some(elem) = tls {
+    elem.join().map_err(|_| std::io::Error::other("TLS thread panicked"))??;
+  }
+  Ok(())
+}
+
+/// The plaintext server: `runtimes` runtimes (one per thread if `None`), each built by `rc`.
+fn serve_plain<RC>(addr: &str, runtimes: Option<NonZeroUsize>, rc: RC) -> rimu_ws::Result<()>
+where
+  RC: Clone + Fn() -> rimu_ws::Result<UringRuntime> + Send + 'static,
+{
   let router = Http1Router::new()
     .route(Some(Method::Get), "/baseline11", endpoint_baseline11)
     .route(Some(Method::Post), "/baseline11", endpoint_baseline11)
@@ -82,12 +81,35 @@ fn main() -> rimu_ws::Result<()> {
     .set_max_delay(Duration::from_millis(MAX_DELAY_MS))
     // Every client speaks first
     .set_tcp_params(TcpParams::default().set_tcp_defer_accept(Some(1)))
-    .set_local_runtime_cb(runtime)
-    .run_in_threads("0.0.0.0:8080", router)?;
-  if let Some(elem) = tls {
-    elem.join().map_err(|_| std::io::Error::other("TLS thread panicked"))??;
-  }
-  Ok(())
+    .set_local_runtime_cb(rc)
+    .set_local_runtimes(runtimes)
+    .run_in_threads(addr, router)
+}
+
+/// The TLS server of the certificate `cert` and its key `key`, with runtimes as [`serve_plain`].
+fn serve_tls<RC>(
+  addr: &str,
+  runtimes: Option<NonZeroUsize>,
+  cert: &[u8],
+  key: &[u8],
+  rc: RC,
+) -> rimu_ws::Result<()>
+where
+  RC: Clone + Fn() -> rimu_ws::Result<UringRuntime> + Send + 'static,
+{
+  let tls_config = TlsConfig::from_keys_pem(cert, key)?;
+  let router = Http1Router::new()
+    .route(Some(Method::Get), "/json/{count}", endpoint_json_plain)
+    .route(Some(Method::Post), "/echo", endpoint_echo);
+  Http1ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new_tls(
+    UringExecutor::default(),
+    ChaCha20::from_std_random()?,
+    tls_config,
+  )?
+  .set_error_cb(error_cb)
+  .set_local_runtime_cb(rc)
+  .set_local_runtimes(runtimes)
+  .run_in_threads(addr, router)
 }
 
 fn error_cb(err: rimu_ws::Error) {
@@ -387,6 +409,10 @@ fn choose_encoding<'a>(lines: impl IntoIterator<Item = &'a str>) -> Option<Encod
 }
 
 /// Compresses `input` with `encoding` into `out`, which is cleared first. `Identity` copies.
+///
+/// The compressors' state is the thread's, reused from one response to the next: gzip resets its
+/// stream, brotli takes its blocks back from [`BrotliPool`]. Built for every response, they would
+/// allocate and clear some 380 KB (gzip) or 480 KB (brotli) each time.
 fn encode(encoding: Encoding, input: &[u8], out: &mut Vec<u8>) -> std::io::Result<()> {
   out.clear();
   match encoding {
@@ -397,25 +423,179 @@ fn encode(encoding: Encoding, input: &[u8], out: &mut Vec<u8>) -> std::io::Resul
         size_hint: input.len(),
         ..Default::default()
       };
+      // `brotli::BrotliCompress` with the pool for allocator, and an end-of-input error that is
+      // not allocated for every call (its `io::Error::new` is)
+      let (mut input_buffer, mut output_buffer) = ([0u8; 4096], [0u8; 4096]);
       let mut reader = input;
-      brotli::BrotliCompress(&mut reader, out, &params)?;
+      let mut no_callback =
+        |_: &mut brotli::interface::PredictionModeContextMap<brotli::InputReferenceMut<'_>>,
+         _: &mut [brotli::interface::StaticCommand],
+         _: brotli::InputPair<'_>,
+         _: &mut BrotliPool| ();
+      let _len = brotli::BrotliCompressCustomIo(
+        &mut brotli::IoReaderWrapper(&mut reader),
+        &mut brotli::IoWriterWrapper(out),
+        &mut input_buffer,
+        &mut output_buffer,
+        &params,
+        BrotliPool,
+        &mut no_callback,
+        std::io::Error::from(std::io::ErrorKind::UnexpectedEof),
+      )?;
     }
-    Encoding::Gzip => {
-      out.resize(zlib_rs::compress_bound(input.len()).saturating_add(64), 0);
-      let config = zlib_rs::DeflateConfig {
-        window_bits: GZIP_WINDOW_BITS,
-        ..zlib_rs::DeflateConfig::new(GZIP_LEVEL)
-      };
-      let (done, code) = zlib_rs::compress_slice(out, input, config);
-      if code != zlib_rs::ReturnCode::Ok {
+    Encoding::Gzip => GZIP.with(|cell| -> std::io::Result<()> {
+      let mut cell = cell.borrow_mut();
+      let deflate = cell.get_or_insert_with(|| {
+        zlib_rs::Deflate::new_with_config(zlib_rs::DeflateConfig {
+          window_bits: GZIP_WINDOW_BITS,
+          ..zlib_rs::DeflateConfig::new(GZIP_LEVEL)
+        })
+      });
+      // Also after a failed response, whose stream may have stopped in the middle
+      deflate.reset();
+      out.reserve(zlib_rs::compress_bound(input.len()).saturating_add(64));
+      let status = deflate
+        .compress_uninit(input, out.spare_capacity_mut(), zlib_rs::DeflateFlush::Finish)
+        .map_err(|_| std::io::Error::other("gzip failed"))?;
+      if status != zlib_rs::Status::StreamEnd {
         return Err(std::io::Error::other("gzip failed"));
       }
-      let len = done.len();
-      out.truncate(len);
-    }
+      let len = usize::try_from(deflate.total_out()).unwrap_or(usize::MAX);
+      if len > out.capacity() {
+        return Err(std::io::Error::other("gzip failed"));
+      }
+      // SAFETY: the stream wrote `len` bytes into the spare capacity, which starts at 0
+      unsafe {
+        out.set_len(len);
+      }
+      Ok(())
+    })?,
     Encoding::Identity => out.extend_from_slice(input),
   }
   Ok(())
+}
+
+thread_local! {
+  /// The thread's gzip stream, built by the first gzip response.
+  static GZIP: RefCell<Option<zlib_rs::Deflate>> = const { RefCell::new(None) };
+  /// The blocks brotli encoders freed on this thread, for [`BrotliPool`].
+  static BROTLI_FREE: RefCell<BrotliFree> = const { RefCell::new(BrotliFree { blocks: Vec::new(), bytes: 0 }) };
+}
+
+/// Bytes of free blocks a thread keeps at most for brotli: one encoder's state at the arena's
+/// quality and window is about 480 KB, and the sizes of some blocks follow the body's.
+const BROTLI_POOL_MAX: usize = 4 << 20;
+
+/// The allocator of the brotli encoder: a block it frees is kept by the thread, and handed back,
+/// cleared to its default as a new one would be, to the next encoder that asks for the same type
+/// and length. The encoder sees what it would of a new allocation, so the output is the same.
+#[derive(Clone, Copy, Debug, Default)]
+struct BrotliPool;
+
+impl brotli::enc::BrotliAlloc for BrotliPool {}
+
+impl<T> brotli::Allocator<T> for BrotliPool
+where
+  T: Clone + Default + 'static,
+{
+  type AllocatedMemory = BrotliBlock<T>;
+
+  fn alloc_cell(&mut self, len: usize) -> BrotliBlock<T> {
+    let ty = core::any::TypeId::of::<T>();
+    let reused = BROTLI_FREE.with(|cell| {
+      let mut free = cell.borrow_mut();
+      let idx = free.blocks.iter().position(|el| el.ty == ty && el.len == len)?;
+      let block = free.blocks.swap_remove(idx);
+      free.bytes = free.bytes.saturating_sub(block.bytes);
+      Some(block.ptr)
+    });
+    let Some(ptr) = reused else {
+      return BrotliBlock(vec![T::default(); len].into_boxed_slice());
+    };
+    // SAFETY: `ptr` is the `Box<[T]>` of `len` elements that `free_cell` gave up
+    let mut block =
+      unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), len)) };
+    block.fill(T::default());
+    BrotliBlock(block)
+  }
+
+  fn free_cell(&mut self, data: BrotliBlock<T>) {
+    let len = data.0.len();
+    let bytes = len.saturating_mul(size_of::<T>());
+    if bytes == 0 {
+      return;
+    }
+    BROTLI_FREE.with(|cell| {
+      let mut free = cell.borrow_mut();
+      if free.bytes.saturating_add(bytes) > BROTLI_POOL_MAX {
+        return;
+      }
+      let ptr = Box::into_raw(data.0).cast::<u8>();
+      free.bytes = free.bytes.wrapping_add(bytes);
+      free.blocks.push(FreeBlock {
+        bytes,
+        drop: drop_block::<T>,
+        len,
+        ptr,
+        ty: core::any::TypeId::of::<T>(),
+      });
+    });
+  }
+}
+
+/// A block of a brotli encoder.
+struct BrotliBlock<T>(Box<[T]>);
+
+impl<T> Default for BrotliBlock<T> {
+  fn default() -> Self {
+    Self(Box::default())
+  }
+}
+
+impl<T> brotli::SliceWrapper<T> for BrotliBlock<T> {
+  fn slice(&self) -> &[T] {
+    &self.0
+  }
+}
+
+impl<T> brotli::SliceWrapperMut<T> for BrotliBlock<T> {
+  fn slice_mut(&mut self) -> &mut [T] {
+    &mut self.0
+  }
+}
+
+/// The free blocks of a thread's [`BrotliPool`], and their size.
+struct BrotliFree {
+  blocks: Vec<FreeBlock>,
+  bytes: usize,
+}
+
+impl Drop for BrotliFree {
+  fn drop(&mut self) {
+    for block in self.blocks.drain(..) {
+      // SAFETY: `drop` is the one of the block's type and length
+      unsafe { (block.drop)(block.ptr, block.len) }
+    }
+  }
+}
+
+/// A block a brotli encoder freed: a `Box<[T]>` of `len` elements of the type `ty`.
+struct FreeBlock {
+  bytes: usize,
+  drop: unsafe fn(*mut u8, usize),
+  len: usize,
+  ptr: *mut u8,
+  ty: core::any::TypeId,
+}
+
+/// Frees the `Box<[T]>` of `len` elements at `ptr`.
+///
+/// # Safety
+///
+/// `ptr` and `len` are those of a `Box<[T]>` given up by `Box::into_raw`.
+unsafe fn drop_block<T>(ptr: *mut u8, len: usize) {
+  // SAFETY: as the caller ensures
+  drop(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), len)) });
 }
 
 /// Append `n` as decimal ASCII to `out`, without the `core::fmt` machinery.
@@ -439,6 +619,10 @@ fn push_i64(out: &mut Vec<u8>, n: i64) {
   }
   out.extend_from_slice(&buf[i..]);
 }
+
+#[cfg(test)]
+#[path = "arena_h1/alloc_tests.rs"]
+mod alloc_tests;
 
 #[cfg(test)]
 mod tests {
@@ -589,6 +773,78 @@ mod tests {
       let mut buf = VectorUsize::new();
       write_json(&mut buf, &dataset, count, m.into()).unwrap();
       assert_eq!(buf.len(), len, "count {count}, m {m}");
+    }
+  }
+
+  /// Inputs of several sizes, the larger ones less compressible, for the reuse tests.
+  fn reuse_inputs() -> Vec<Vec<u8>> {
+    let mut seed: u32 = 7;
+    let mut noise = |len: usize| -> Vec<u8> {
+      (0..len)
+        .map(|_| {
+          seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+          b'a' + (seed >> 16) as u8 % 8
+        })
+        .collect()
+    };
+    let mut out = vec![Vec::new(), b"x".to_vec(), SAMPLE.as_bytes().to_vec()];
+    out.extend([100, 4190, 8397, 70_000, 4190, 1].map(&mut noise));
+    out.push(SAMPLE.repeat(40).into_bytes());
+    out
+  }
+
+  // The thread's gzip stream, reset for every response, writes what a new one would, input after
+  // input.
+  #[test]
+  fn reused_gzip_stream_matches_a_new_one() {
+    let mut out = Vec::new();
+    for _ in 0..2 {
+      for input in reuse_inputs() {
+        encode(Encoding::Gzip, &input, &mut out).unwrap();
+        let mut fresh = vec![0u8; zlib_rs::compress_bound(input.len()) + 64];
+        let config = zlib_rs::DeflateConfig {
+          window_bits: GZIP_WINDOW_BITS,
+          ..zlib_rs::DeflateConfig::new(GZIP_LEVEL)
+        };
+        let (done, code) = zlib_rs::compress_slice(&mut fresh, &input, config);
+        assert_eq!(code, zlib_rs::ReturnCode::Ok);
+        assert_eq!(out, done, "{} bytes", input.len());
+        assert_eq!(ungzip(&out), input);
+      }
+    }
+  }
+
+  // Brotli on the thread's pool writes what it does on new allocations, input after input.
+  #[test]
+  fn pooled_brotli_matches_a_new_encoder() {
+    let mut out = Vec::new();
+    for _ in 0..2 {
+      for input in reuse_inputs() {
+        encode(Encoding::Brotli, &input, &mut out).unwrap();
+        let params = brotli::enc::BrotliEncoderParams {
+          quality: BROTLI_QUALITY,
+          lgwin: BROTLI_LGWIN,
+          size_hint: input.len(),
+          ..Default::default()
+        };
+        let mut fresh = Vec::new();
+        brotli::BrotliCompress(&mut input.as_slice(), &mut fresh, &params).unwrap();
+        assert_eq!(out, fresh, "{} bytes", input.len());
+        assert_eq!(unbrotli(&out), input);
+      }
+    }
+  }
+
+  // The pool keeps at most BROTLI_POOL_MAX bytes, whatever the sizes it was asked for.
+  #[test]
+  fn brotli_pool_is_bounded() {
+    let mut out = Vec::new();
+    for len in (1..200).map(|el| el * 997) {
+      let input: Vec<u8> = (0..len).map(|el| (el * 31 % 251) as u8).collect();
+      encode(Encoding::Brotli, &input, &mut out).unwrap();
+      assert_eq!(unbrotli(&out), input);
+      let bytes = BROTLI_FREE.with(|el| el.borrow().bytes);
+      assert!(bytes <= BROTLI_POOL_MAX, "{bytes}");
     }
   }
 
