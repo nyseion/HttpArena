@@ -5,7 +5,7 @@
   "mode": "tuned",
   "completeness": {
     "routing": true,
-    "middleware": true,
+    "middleware": false,
     "request": true,
     "response": true
   },
