@@ -61,4 +61,7 @@ The `Date` header is left out, which HTTP/1.1 allows for a server without a cloc
 
 ## Building
 
-The rimu-ws sources are copied into `rimu-ws/` by `local-src.sh` before `docker build`.
+The rimu-ws sources are copied into `rimu-ws/` by `local-src.sh` before `docker build`; it also copies
+`src/main.rs` and `src/arena_h1/alloc_tests.rs` from the checkout's arena-h1. `cargo test` runs the
+server's unit tests and its steady-state allocation tests, which need the arena dataset (`DATASET_PATH`)
+and certificate pair (`CERT_DIR`).
