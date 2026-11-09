@@ -8,10 +8,12 @@
 //! - The WebSocket runtimes spin 20 µs before sleeping (dedicated cores, clients that reconnect
 //!   often) and skip the peer-address lookup (no handler uses it). The HTTP/2 runtimes keep the
 //!   defaults: spin measured level there.
-//! - HTTP/3 is the library's `Http3ServerFramework` on its defaults: the same router and handlers as
+//! - HTTP/3 is the library's `Http3ServerFramework` on its defaults: the same paths and handlers as
 //!   h2, one worker per CPU of the container, each with its own `SO_REUSEPORT` UDP socket on
 //!   `[::]:8443` (dual-stack, replies leave from the address the client used). Its responses carry
-//!   `content-type`, `content-length`, `date` and the `server` header of the middleware.
+//!   `content-type` only, like cnetmod and zix: the default of the framework leaves out `date` and
+//!   `content-length` and is not RFC 9110-compliant, and the router has no `server` middleware.
+//!   Full RFC 9110 headers: `set_rfc9110_headers(true)`.
 //!
 //! Environment: `CERT_DIR` (default `/certs`, with `server.crt` and `server.key`), `DATASET_PATH`
 //! (default `/data/dataset.json`), `STATIC_DIR` (default `/data/static`).
@@ -45,16 +47,22 @@ type Common<'i> = WebSocketCommonMut<'i, (), UringTcpStream, PlaintextCtx, false
 type Reader<'i> = WebSocketReaderMut<'i, (), UringTcpStream, PlaintextCtx, false>;
 type Writer<'i> = WebSocketWriterMut<'i, (), UringTcpStream, PlaintextCtx, false>;
 
+macro_rules! paths {
+    () => {
+        rimu_ws::paths!(
+            ("/baseline2", get(endpoint_baseline2)),
+            ("/json/{count}", get(endpoint_json)),
+            ("/static/{*file}", Get(StaticFiles::new(static_dir())?))
+        )
+    };
+}
+
 macro_rules! router {
     () => {
-        HttpRouter::new(
-            rimu_ws::paths!(
-                ("/baseline2", get(endpoint_baseline2)),
-                ("/json/{count}", get(endpoint_json)),
-                ("/static/{*file}", Get(StaticFiles::new(static_dir())?))
-            ),
-            ServerHeader,
-        )
+        HttpRouter::new(paths!(), ServerHeader)
+    };
+    (no_middleware) => {
+        HttpRouter::paths(paths!())
     };
 }
 
@@ -93,13 +101,17 @@ fn main() -> rimu_ws::Result<()> {
             .run_in_threads("0.0.0.0:8443", router!()?)
         });
         let h3 = std::thread::spawn(move || -> rimu_ws::Result<()> {
-            Http3ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+            let rslt = Http3ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
                 UringExecutor::default(),
                 ChaCha20::from_std_random()?,
                 TlsConfig::from_keys_pem(&cert, key.as_slice())?,
             )?
             .set_data(ConnAux { dataset: h3_data })
-            .run_in_threads("[::]:8443", router!()?)
+            .run_in_threads("[::]:8443", router!(no_middleware)?);
+            if let Err(err) = &rslt {
+                eprintln!("rimu-ws: the HTTP/3 server ended: {err}");
+            }
+            rslt
         });
         (Some(h2), Some(h3))
     } else {

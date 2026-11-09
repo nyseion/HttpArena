@@ -25,9 +25,9 @@ on its io_uring executor. One binary serves:
 - **HTTP/3:** rimu-ws's own QUIC and HTTP/3 stack (no quinn, quiche or nghttp3) on the same
   io_uring runtimes: one worker per CPU of the container, each with its own `SO_REUSEPORT` UDP
   socket on `[::]:8443` (dual-stack: IPv4 clients are answered from the address they used). A
-  request whose handler completes at once is answered in the turn that received it. Responses
-  carry `content-type`, `content-length`, `date` and `server: rimu-ws`; QPACK is static-table
-  only for responses.
+  request whose handler completes at once is answered in the turn that received it. HTTP/3
+  responses carry content-type only, like cnetmod and zix; full RFC 9110 headers via
+  `set_rfc9110_headers(true)`. QPACK is static-table only for responses.
 
 ## Settings
 
