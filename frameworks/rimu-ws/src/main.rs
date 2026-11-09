@@ -107,6 +107,9 @@ fn main() -> rimu_ws::Result<()> {
                 TlsConfig::from_keys_pem(&cert, key.as_slice())?,
             )?
             .set_data(ConnAux { dataset: h3_data })
+            // The data is an `Arc` of the dataset that no handler changes: the clones of the
+            // requests that ended go to the next ones (no allocation per request)
+            .set_reuse_data(true)
             .run_in_threads("[::]:8443", router!(no_middleware)?);
             if let Err(err) = &rslt {
                 eprintln!("rimu-ws: the HTTP/3 server ended: {err}");
