@@ -10,5 +10,5 @@ RUN RUSTFLAGS="-C target-cpu=native" cargo build --release
 
 FROM debian:bookworm-slim
 COPY --from=build /app/target/release/httparena-rimu-ws /server
-EXPOSE 8080 8082 8443
+EXPOSE 8080 8082 8443 8443/udp
 CMD ["/server"]

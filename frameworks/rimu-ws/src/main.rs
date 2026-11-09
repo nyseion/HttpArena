@@ -1,5 +1,6 @@
-//! rimu-ws for HttpArena: a WebSocket echo server on 8080 (`/ws`) and an HTTP/2 server on 8082
-//! (h2c) and 8443 (h2 over TLS) with `/baseline2`, `/json/{count}` and `/static/{*file}`.
+//! rimu-ws for HttpArena: a WebSocket echo server on 8080 (`/ws`), an HTTP/2 server on 8082 (h2c)
+//! and 8443 (h2 over TLS) and an HTTP/3 server on UDP 8443, the last two with `/baseline2`,
+//! `/json/{count}` and `/static/{*file}`.
 //!
 //! Everything runs with the library defaults plus the settings `docs/production.md` of rimu-ws
 //! recommends for this deployment shape: the server has dedicated cores and its clients speak first.
@@ -7,6 +8,10 @@
 //! - The WebSocket runtimes spin 20 µs before sleeping (dedicated cores, clients that reconnect
 //!   often) and skip the peer-address lookup (no handler uses it). The HTTP/2 runtimes keep the
 //!   defaults: spin measured level there.
+//! - HTTP/3 is the library's `Http3ServerFramework` on its defaults: the same router and handlers as
+//!   h2, one worker per CPU of the container, each with its own `SO_REUSEPORT` UDP socket on
+//!   `[::]:8443` (dual-stack, replies leave from the address the client used). Its responses carry
+//!   `content-type`, `content-length`, `date` and the `server` header of the middleware.
 //!
 //! Environment: `CERT_DIR` (default `/certs`, with `server.crt` and `server.key`), `DATASET_PATH`
 //! (default `/data/dataset.json`), `STATIC_DIR` (default `/data/static`).
@@ -22,6 +27,7 @@ use rimu_ws::{
             Get, Http2ServerFramework, HttpRouter, JsonReply, Middleware, Path, State,
             StaticFiles, VerbatimParams, get,
         },
+        http3_server_framework::Http3ServerFramework,
     },
     misc::JsonWriter,
     net::TcpParams,
@@ -71,23 +77,34 @@ fn main() -> rimu_ws::Result<()> {
     });
     let dataset = load_dataset();
     let cert_dir = std::env::var("CERT_DIR").unwrap_or_else(|_| "/certs".into());
-    let tls = if std::path::Path::new(&cert_dir).join("server.crt").exists() {
-        let data = dataset.clone();
+    let (tls, h3) = if std::path::Path::new(&cert_dir).join("server.crt").exists() {
         let cert = std::fs::read(format!("{cert_dir}/server.crt"))?;
         let key = std::fs::read(format!("{cert_dir}/server.key"))?;
-        Some(std::thread::spawn(move || -> rimu_ws::Result<()> {
+        let (h2_data, h3_data) = (dataset.clone(), dataset.clone());
+        let (h2_cert, h2_key) = (cert.clone(), key.clone());
+        let h2 = std::thread::spawn(move || -> rimu_ws::Result<()> {
             Http2ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+                UringExecutor::default(),
+                ChaCha20::from_std_random()?,
+                TlsConfig::from_keys_pem(&h2_cert, h2_key.as_slice())?,
+            )?
+            .set_data(ConnAux { dataset: h2_data })
+            .set_tcp_params(tcp_params())
+            .run_in_threads("0.0.0.0:8443", router!()?)
+        });
+        let h3 = std::thread::spawn(move || -> rimu_ws::Result<()> {
+            Http3ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
                 UringExecutor::default(),
                 ChaCha20::from_std_random()?,
                 TlsConfig::from_keys_pem(&cert, key.as_slice())?,
             )?
-            .set_data(ConnAux { dataset: data })
-            .set_tcp_params(tcp_params())
-            .run_in_threads("0.0.0.0:8443", router!()?)
-        }))
+            .set_data(ConnAux { dataset: h3_data })
+            .run_in_threads("[::]:8443", router!()?)
+        });
+        (Some(h2), Some(h3))
     } else {
-        eprintln!("rimu-ws: no {cert_dir}/server.crt, TLS on 8443 disabled");
-        None
+        eprintln!("rimu-ws: no {cert_dir}/server.crt, TLS on 8443 (h2) and UDP 8443 (h3) disabled");
+        (None, None)
     };
     Http2ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
         UringExecutor::default(),
@@ -99,6 +116,9 @@ fn main() -> rimu_ws::Result<()> {
     .run_in_threads("0.0.0.0:8082", router!()?)?;
     if let Some(elem) = tls {
         elem.join().map_err(|_| std::io::Error::other("TLS thread panicked"))??;
+    }
+    if let Some(elem) = h3 {
+        elem.join().map_err(|_| std::io::Error::other("HTTP/3 thread panicked"))??;
     }
     ws.join().map_err(|_| std::io::Error::other("WebSocket thread panicked"))??;
     Ok(())

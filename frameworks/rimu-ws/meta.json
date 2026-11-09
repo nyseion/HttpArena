@@ -10,7 +10,7 @@
     "response": true
   },
   "engine": "io_uring",
-  "description": "rimu-ws - a fork of wtx on a thread-per-core io_uring executor (multishot accept and recv into a provided buffer ring). WebSocket echo through its WebSocketServerFramework: frames echoed straight out of the receive buffer with one vectored send per batch. HTTP/2 (h2c on :8082, h2 over TLS on :8443) through its Http2ServerFramework: HttpRouter routes, a server-header middleware, path and query extraction, JSON written per request, StaticFiles with precompressed .br/.gz variants chosen by Accept-Encoding. Library defaults plus the production guide's settings for dedicated cores (20 us spin, WebSocket only) and clients that speak first (TCP_DEFER_ACCEPT).",
+  "description": "rimu-ws - a fork of wtx on a thread-per-core io_uring executor (multishot accept and recv into a provided buffer ring). WebSocket echo through its WebSocketServerFramework: frames echoed straight out of the receive buffer with one vectored send per batch. HTTP/2 (h2c on :8082, h2 over TLS on :8443) through its Http2ServerFramework: HttpRouter routes, a server-header middleware, path and query extraction, JSON written per request, StaticFiles with precompressed .br/.gz variants chosen by Accept-Encoding. HTTP/3 (UDP :8443, beside h2) through its Http3ServerFramework: its own QUIC stack on one io_uring UDP socket per core, the same router and handlers as h2. Library defaults plus the production guide's settings for dedicated cores (20 us spin, WebSocket only) and clients that speak first (TCP_DEFER_ACCEPT).",
   "repo": "https://github.com/vincentmele/rimu-ws",
   "enabled": true,
   "tests": [
@@ -19,6 +19,8 @@
     "echo-ws-limited",
     "baseline-h2",
     "static-h2",
+    "baseline-h3",
+    "static-h3",
     "baseline-h2c",
     "json-h2c"
   ],

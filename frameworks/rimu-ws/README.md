@@ -5,7 +5,9 @@ on its io_uring executor. One binary serves:
 
 - **WebSocket echo** on 8080 (`/ws`) through `WebSocketServerFramework`;
 - **HTTP/2** through `Http2ServerFramework`: h2c on 8082 and h2 over TLS on 8443, with
-  `/baseline2`, `/json/{count}` and `/static/{*file}`.
+  `/baseline2`, `/json/{count}` and `/static/{*file}`;
+- **HTTP/3** through `Http3ServerFramework` on UDP 8443, beside h2, with the same router and
+  handlers (`/baseline2`, `/static/{*file}` and `/json/{count}`).
 
 ## I/O path
 
@@ -20,6 +22,12 @@ on its io_uring executor. One binary serves:
   of idle connections go back to per-thread pools. TLS records are sealed in user space straight
   into the send buffers. Static files are served from a per-thread cache, with `.br`/`.gz`
   variants chosen by `Accept-Encoding`.
+- **HTTP/3:** rimu-ws's own QUIC and HTTP/3 stack (no quinn, quiche or nghttp3) on the same
+  io_uring runtimes: one worker per CPU of the container, each with its own `SO_REUSEPORT` UDP
+  socket on `[::]:8443` (dual-stack: IPv4 clients are answered from the address they used). A
+  request whose handler completes at once is answered in the turn that received it. Responses
+  carry `content-type`, `content-length`, `date` and `server: rimu-ws`; QPACK is static-table
+  only for responses.
 
 ## Settings
 
