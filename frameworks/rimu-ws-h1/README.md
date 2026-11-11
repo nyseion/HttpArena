@@ -18,7 +18,7 @@ All eight HTTP/1.1 profiles:
 | 8gbit | 8081 (TLS) | `POST /echo`: the request body, byte for byte |
 
 `/json` serializes the dataset on every request. On 8080 it also compresses those bytes on every
-request, by every `Accept-Encoding` line of the request: **gzip** (zlib level 6) if offered, else
+request, by every `Accept-Encoding` line of the request: **gzip** (rimu-ws's one-shot `GzipEncoder`) if offered, else
 brotli (quality 2), else none. gzip is preferred because, on this dataset, it produces a body about
 the size of brotli's at a fraction of the CPU, which wins the size-penalised json-comp score. Every
 response carries `Vary: Accept-Encoding`, and a request that refuses identity (`identity;q=0`, or
