@@ -121,6 +121,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rimu-json"
+version = "0.1.0"
+dependencies = [
+ "zmij",
+]
+
+[[package]]
 name = "rimu-ws"
 version = "0.52.1"
 dependencies = [
@@ -130,6 +137,7 @@ dependencies = [
  "io-uring",
  "libc",
  "memchr",
+ "rimu-json",
  "rimu-ws-macros",
  "ring",
  "serde",
@@ -137,7 +145,6 @@ dependencies = [
  "simdutf8",
  "socket2",
  "zlib-rs",
- "zmij",
 ]
 
 [[package]]

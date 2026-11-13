@@ -3,6 +3,9 @@ RUN rustup default nightly-2026-10-12
 WORKDIR /app
 # The rimu-ws sources, copied in by `local-src.sh`.
 COPY rimu-ws ./rimu-ws
+COPY rimu-json ./rimu-json
+COPY rimu-gzip ./rimu-gzip
+COPY rimu-http1 ./rimu-http1
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src/ target/release/httparena-rimu-ws* target/release/deps/httparena_rimu_ws*
 COPY src ./src
