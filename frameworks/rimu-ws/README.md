@@ -22,7 +22,8 @@ on its io_uring executor. One binary serves:
   of idle connections go back to per-thread pools. TLS records are sealed in user space straight
   into the send buffers. Static files are served from a per-thread cache, with `.br`/`.gz`
   variants chosen by `Accept-Encoding`.
-- **HTTP/3:** rimu-ws's own QUIC and HTTP/3 stack (no quinn, quiche or nghttp3) on the same
+- **HTTP/3:** the rimu crates' QUIC, HTTP/3 and QPACK (rimu-quic, rimu-h3, rimu-qpack; no
+  quinn, quiche or nghttp3; QUIC's TLS 1.3 is rustls) driven by rimu-ws's own loop on the same
   io_uring runtimes: one worker per CPU of the container, each with its own `SO_REUSEPORT` UDP
   socket on `[::]:8443` (dual-stack: IPv4 clients are answered from the address they used). A
   request whose handler completes at once is answered in the turn that received it. HTTP/3

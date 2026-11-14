@@ -33,6 +33,7 @@ use rimu_ws::{
     },
     misc::JsonWriter,
     net::TcpParams,
+    quic::rustls::RustlsConfig,
     rng::{ChaCha20, CryptoSeedableRng as _},
     sync::Arc,
     tls::{PlaintextCtx, TlsConfig},
@@ -101,10 +102,16 @@ fn main() -> rimu_ws::Result<()> {
             .run_in_threads("0.0.0.0:8443", router!()?)
         });
         let h3 = std::thread::spawn(move || -> rimu_ws::Result<()> {
-            let rslt = Http3ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+            // QUIC's TLS is rustls (rimu-quic), configured from the same PEM pair
+            let tls = RustlsConfig::builder()
+                .cert_chain_pem(&cert)
+                .private_key_pem(&key)
+                .build()
+                .map_err(|err| rimu_ws::Error::from(std::io::Error::other(err)))?;
+            let rslt = Http3ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _>::new(
                 UringExecutor::default(),
                 ChaCha20::from_std_random()?,
-                TlsConfig::from_keys_pem(&cert, key.as_slice())?,
+                tls,
             )?
             .set_data(ConnAux { dataset: h3_data })
             // The data is an `Arc` of the dataset that no handler changes: the clones of the
