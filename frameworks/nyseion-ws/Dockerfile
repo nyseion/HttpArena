@@ -3,8 +3,6 @@ RUN rustup default nightly-2026-10-12
 WORKDIR /app
 # The nyseion-ws sources, copied in by `local-src.sh`.
 COPY nyseion-ws ./nyseion-ws
-COPY nyseion-quic ./nyseion-quic
-COPY nyseion-qpack ./nyseion-qpack
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src/ target/release/httparena-nyseion-ws* target/release/deps/httparena_nyseion_ws*
 COPY src ./src
