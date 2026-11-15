@@ -1,0 +1,5 @@
+{
+  "framework": "nyseion-ws",
+  "tls": "pass",
+  "check": "none"
+}
