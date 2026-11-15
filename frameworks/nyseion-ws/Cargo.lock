@@ -121,6 +121,67 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "nyseion-h3"
+version = "0.1.0"
+source = "git+https://github.com/nyseion/nyseion-quic#ac0b89d515011fcea1585076389c506f86d67020"
+dependencies = [
+ "nyseion-qpack",
+ "nyseion-quic",
+]
+
+[[package]]
+name = "nyseion-qpack"
+version = "0.1.0"
+source = "git+https://github.com/nyseion/nyseion-qpack#4ed5553f6e7153cb51274a375bcf8f55ab93f2b8"
+
+[[package]]
+name = "nyseion-quic"
+version = "0.1.0"
+source = "git+https://github.com/nyseion/nyseion-quic#ac0b89d515011fcea1585076389c506f86d67020"
+dependencies = [
+ "foldhash",
+ "getrandom 0.3.4",
+ "hashbrown 0.16.1",
+ "libc",
+ "rand_chacha",
+ "rand_core",
+ "ring",
+ "rustls",
+]
+
+[[package]]
+name = "nyseion-ws"
+version = "0.52.1"
+dependencies = [
+ "foldhash",
+ "hashbrown 0.17.1",
+ "httparse",
+ "io-uring",
+ "libc",
+ "memchr",
+ "nyseion-h3",
+ "nyseion-qpack",
+ "nyseion-quic",
+ "nyseion-ws-macros",
+ "ring",
+ "serde",
+ "serde_json",
+ "simdutf8",
+ "socket2",
+ "zlib-rs",
+ "zmij",
+]
+
+[[package]]
+name = "nyseion-ws-macros"
+version = "0.12.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -174,64 +235,6 @@ name = "rand_core"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
-
-[[package]]
-name = "nyseion-h3"
-version = "0.1.0"
-dependencies = [
- "nyseion-qpack",
- "nyseion-quic",
-]
-
-[[package]]
-name = "nyseion-qpack"
-version = "0.1.0"
-
-[[package]]
-name = "nyseion-quic"
-version = "0.1.0"
-dependencies = [
- "foldhash",
- "getrandom 0.3.4",
- "hashbrown 0.16.1",
- "libc",
- "rand_chacha",
- "rand_core",
- "ring",
- "rustls",
-]
-
-[[package]]
-name = "nyseion-ws"
-version = "0.52.1"
-dependencies = [
- "foldhash",
- "hashbrown 0.17.1",
- "httparse",
- "io-uring",
- "libc",
- "memchr",
- "nyseion-h3",
- "nyseion-qpack",
- "nyseion-quic",
- "nyseion-ws-macros",
- "ring",
- "serde",
- "serde_json",
- "simdutf8",
- "socket2",
- "zlib-rs",
- "zmij",
-]
-
-[[package]]
-name = "nyseion-ws-macros"
-version = "0.12.1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
 
 [[package]]
 name = "ring"
