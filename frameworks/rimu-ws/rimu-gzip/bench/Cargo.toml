@@ -1,0 +1,13 @@
+[package]
+name = "bench"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+rimu-gzip = { path = "../rimu-gzip" }
+crc32fast = "1.4"
+libdeflater = "1"
+miniz_oxide = "0.8"
+zlib-rs = { version = "0.6", default-features = false, features = ["rust-allocator", "__internal-api"] }
+sirocco = "0.3.1"
