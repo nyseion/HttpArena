@@ -1,8 +1,8 @@
-# rimu-ws-h1
+# nyseion-ws-h1
 
-[rimu-ws](https://github.com/vincentmele/rimu-ws), a fork of [wtx](https://github.com/c410-f3r/wtx),
+[nyseion-ws](https://github.com/vincentmele/nyseion-ws), a fork of [wtx](https://github.com/c410-f3r/wtx),
 on its io_uring executor, serving HTTP/1.1 through `Http1ServerFramework`: plaintext on 8080 and
-TLS on 8081. The HTTP/2 and WebSocket entry is `rimu-ws`; this one is the HTTP/1.1 server alone.
+TLS on 8081. The HTTP/2 and WebSocket entry is `nyseion-ws`; this one is the HTTP/1.1 server alone.
 
 ## Profiles
 
@@ -18,7 +18,7 @@ All eight HTTP/1.1 profiles:
 | 8gbit | 8081 (TLS) | `POST /echo`: the request body, byte for byte |
 
 `/json` serializes the dataset on every request. On 8080 it also compresses those bytes on every
-request, by every `Accept-Encoding` line of the request: **gzip** (rimu-ws's one-shot `GzipEncoder`) if offered, else
+request, by every `Accept-Encoding` line of the request: **gzip** (nyseion-ws's one-shot `GzipEncoder`) if offered, else
 brotli (quality 2), else none. gzip is preferred because, on this dataset, it produces a body about
 the size of brotli's at a fraction of the CPU, which wins the size-penalised json-comp score. Every
 response carries `Vary: Accept-Encoding`, and a request that refuses identity (`identity;q=0`, or
@@ -48,7 +48,7 @@ never compressed and has no `Vary`.
 
 ## Settings
 
-The library defaults, plus what rimu-ws's production guide recommends for clients that speak first:
+The library defaults, plus what nyseion-ws's production guide recommends for clients that speak first:
 
 - `TCP_DEFER_ACCEPT` on the 8080 listener;
 - **no spin**: the runtimes sleep as soon as their ring is empty, because the latency profiles
@@ -61,7 +61,7 @@ The `Date` header is left out, which HTTP/1.1 allows for a server without a cloc
 
 ## Building
 
-The rimu-ws sources are copied into `rimu-ws/` by `local-src.sh` before `docker build`; it also copies
+The nyseion-ws sources are copied into `nyseion-ws/` by `local-src.sh` before `docker build`; it also copies
 `src/main.rs` and `src/arena_h1/alloc_tests.rs` from the checkout's arena-h1. `cargo test` runs the
 server's unit tests and its steady-state allocation tests, which need the arena dataset (`DATASET_PATH`)
 and certificate pair (`CERT_DIR`).

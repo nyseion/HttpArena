@@ -1,6 +1,6 @@
-# rimu-ws
+# nyseion-ws
 
-[rimu-ws](https://github.com/vincentmele/rimu-ws), a fork of [wtx](https://github.com/c410-f3r/wtx),
+[nyseion-ws](https://github.com/vincentmele/nyseion-ws), a fork of [wtx](https://github.com/c410-f3r/wtx),
 on its io_uring executor. One binary serves:
 
 - **WebSocket echo** on 8080 (`/ws`) through `WebSocketServerFramework`;
@@ -22,7 +22,7 @@ on its io_uring executor. One binary serves:
   of idle connections go back to per-thread pools. TLS records are sealed in user space straight
   into the send buffers. Static files are served from a per-thread cache, with `.br`/`.gz`
   variants chosen by `Accept-Encoding`.
-- **HTTP/3:** rimu-ws's own QUIC and HTTP/3 stack (no quinn, quiche or nghttp3) on the same
+- **HTTP/3:** nyseion-ws's own QUIC and HTTP/3 stack (no quinn, quiche or nghttp3) on the same
   io_uring runtimes: one worker per CPU of the container, each with its own `SO_REUSEPORT` UDP
   socket on `[::]:8443` (dual-stack: IPv4 clients are answered from the address they used). A
   request whose handler completes at once is answered in the turn that received it. HTTP/3
@@ -31,7 +31,7 @@ on its io_uring executor. One binary serves:
 
 ## Settings
 
-The library defaults, plus what rimu-ws's production guide (`docs/production.md`) recommends for
+The library defaults, plus what nyseion-ws's production guide (`docs/production.md`) recommends for
 this deployment shape (dedicated cores, clients that speak first):
 
 - `TCP_DEFER_ACCEPT` on every listener;
@@ -43,4 +43,4 @@ benchmark's files.
 
 ## Building
 
-The rimu-ws sources are copied into `rimu-ws/` by `local-src.sh` before `docker build`.
+The nyseion-ws sources are copied into `nyseion-ws/` by `local-src.sh` before `docker build`.

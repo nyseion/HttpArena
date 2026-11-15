@@ -95,11 +95,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "httparena-rimu-ws-h1"
+name = "httparena-nyseion-ws-h1"
 version = "0.1.0"
 dependencies = [
  "brotli",
- "rimu-ws",
+ "nyseion-ws",
  "serde",
  "serde_json",
  "zlib-rs",
@@ -159,7 +159,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rimu-ws"
+name = "nyseion-ws"
 version = "0.52.1"
 dependencies = [
  "foldhash",
@@ -168,7 +168,7 @@ dependencies = [
  "io-uring",
  "libc",
  "memchr",
- "rimu-ws-macros",
+ "nyseion-ws-macros",
  "ring",
  "serde",
  "serde_json",
@@ -179,7 +179,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rimu-ws-macros"
+name = "nyseion-ws-macros"
 version = "0.12.1"
 dependencies = [
  "proc-macro2",

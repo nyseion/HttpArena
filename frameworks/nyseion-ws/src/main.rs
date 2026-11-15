@@ -1,8 +1,8 @@
-//! rimu-ws for HttpArena: a WebSocket echo server on 8080 (`/ws`), an HTTP/2 server on 8082 (h2c)
+//! nyseion-ws for HttpArena: a WebSocket echo server on 8080 (`/ws`), an HTTP/2 server on 8082 (h2c)
 //! and 8443 (h2 over TLS) and an HTTP/3 server on UDP 8443, the last two with `/baseline2`,
 //! `/json/{count}` and `/static/{*file}`.
 //!
-//! Everything runs with the library defaults plus the settings `docs/production.md` of rimu-ws
+//! Everything runs with the library defaults plus the settings `docs/production.md` of nyseion-ws
 //! recommends for this deployment shape: the server has dedicated cores and its clients speak first.
 //! - Every listener: `TCP_DEFER_ACCEPT` (clients speak first).
 //! - The WebSocket runtimes spin 20 µs before sleeping (dedicated cores, clients that reconnect
@@ -19,7 +19,7 @@
 //! (default `/data/dataset.json`), `STATIC_DIR` (default `/data/static`).
 
 use core::ops::ControlFlow;
-use rimu_ws::{
+use nyseion_ws::{
     collections::{ArrayVectorU8, VectorUsize},
     executor::{UringExecutor, UringParams, UringRuntime, UringTcpStream},
     http::{
@@ -49,7 +49,7 @@ type Writer<'i> = WebSocketWriterMut<'i, (), UringTcpStream, PlaintextCtx, false
 
 macro_rules! paths {
     () => {
-        rimu_ws::paths!(
+        nyseion_ws::paths!(
             ("/baseline2", get(endpoint_baseline2)),
             ("/json/{count}", get(endpoint_json)),
             ("/static/{*file}", Get(StaticFiles::new(static_dir())?))
@@ -66,8 +66,8 @@ macro_rules! router {
     };
 }
 
-fn main() -> rimu_ws::Result<()> {
-    let ws = std::thread::spawn(|| -> rimu_ws::Result<()> {
+fn main() -> nyseion_ws::Result<()> {
+    let ws = std::thread::spawn(|| -> nyseion_ws::Result<()> {
         WebSocketServerFramework::new(
             UringExecutor::default(),
             ChaCha20::from_std_random()?,
@@ -90,8 +90,8 @@ fn main() -> rimu_ws::Result<()> {
         let key = std::fs::read(format!("{cert_dir}/server.key"))?;
         let (h2_data, h3_data) = (dataset.clone(), dataset.clone());
         let (h2_cert, h2_key) = (cert.clone(), key.clone());
-        let h2 = std::thread::spawn(move || -> rimu_ws::Result<()> {
-            Http2ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+        let h2 = std::thread::spawn(move || -> nyseion_ws::Result<()> {
+            Http2ServerFramework::<(), fn(nyseion_ws::Error), UringExecutor, _, _, _>::new(
                 UringExecutor::default(),
                 ChaCha20::from_std_random()?,
                 TlsConfig::from_keys_pem(&h2_cert, h2_key.as_slice())?,
@@ -100,8 +100,8 @@ fn main() -> rimu_ws::Result<()> {
             .set_tcp_params(tcp_params())
             .run_in_threads("0.0.0.0:8443", router!()?)
         });
-        let h3 = std::thread::spawn(move || -> rimu_ws::Result<()> {
-            let rslt = Http3ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+        let h3 = std::thread::spawn(move || -> nyseion_ws::Result<()> {
+            let rslt = Http3ServerFramework::<(), fn(nyseion_ws::Error), UringExecutor, _, _, _>::new(
                 UringExecutor::default(),
                 ChaCha20::from_std_random()?,
                 TlsConfig::from_keys_pem(&cert, key.as_slice())?,
@@ -112,16 +112,16 @@ fn main() -> rimu_ws::Result<()> {
             .set_reuse_data(true)
             .run_in_threads("[::]:8443", router!(no_middleware)?);
             if let Err(err) = &rslt {
-                eprintln!("rimu-ws: the HTTP/3 server ended: {err}");
+                eprintln!("nyseion-ws: the HTTP/3 server ended: {err}");
             }
             rslt
         });
         (Some(h2), Some(h3))
     } else {
-        eprintln!("rimu-ws: no {cert_dir}/server.crt, TLS on 8443 (h2) and UDP 8443 (h3) disabled");
+        eprintln!("nyseion-ws: no {cert_dir}/server.crt, TLS on 8443 (h2) and UDP 8443 (h3) disabled");
         (None, None)
     };
-    Http2ServerFramework::<(), fn(rimu_ws::Error), UringExecutor, _, _, _>::new(
+    Http2ServerFramework::<(), fn(nyseion_ws::Error), UringExecutor, _, _, _>::new(
         UringExecutor::default(),
         ChaCha20::from_std_random()?,
         TlsConfig::plaintext(),
@@ -160,12 +160,12 @@ fn drain<'i>(
     writer: &mut Writer<'i>,
     common: &mut Common<'i>,
     buffer: &mut VectorUsize<u8>,
-) -> rimu_ws::Result<()> {
+) -> nyseion_ws::Result<()> {
     while let Some(mut frame) =
         reader.read_buffered_frame(buffer, common, WebSocketPayloadOrigin::Adaptive)?
     {
         if !writer.queue_frame(common, &mut frame)? {
-            return Err(rimu_ws::Error::UnexpectedBufferState);
+            return Err(nyseion_ws::Error::UnexpectedBufferState);
         }
     }
     // Hand the echoes to the socket now; if it has no room they go out before `fill` waits.
@@ -173,7 +173,7 @@ fn drain<'i>(
     Ok(())
 }
 
-async fn ws(mut buffer: VectorUsize<u8>, mut ws: LocalWebSocket) -> rimu_ws::Result<()> {
+async fn ws(mut buffer: VectorUsize<u8>, mut ws: LocalWebSocket) -> nyseion_ws::Result<()> {
     let (mut common, mut reader, mut writer) = ws.split_mut();
     let origin = WebSocketPayloadOrigin::Adaptive;
     loop {
@@ -203,10 +203,10 @@ async fn ws(mut buffer: VectorUsize<u8>, mut ws: LocalWebSocket) -> rimu_ws::Res
     }
 }
 
-/// Adds `server: rimu-ws` to every response.
+/// Adds `server: nyseion-ws` to every response.
 struct ServerHeader;
 
-impl Middleware<ConnAux, rimu_ws::Error> for ServerHeader {
+impl Middleware<ConnAux, nyseion_ws::Error> for ServerHeader {
     type Aux = ();
 
     fn aux(&self) -> Self::Aux {}
@@ -216,7 +216,7 @@ impl Middleware<ConnAux, rimu_ws::Error> for ServerHeader {
         _: &mut ConnAux,
         _: &mut Self::Aux,
         _: &mut Request<MsgBufferString>,
-    ) -> rimu_ws::Result<ControlFlow<StatusCode, ()>> {
+    ) -> nyseion_ws::Result<ControlFlow<StatusCode, ()>> {
         Ok(ControlFlow::Continue(()))
     }
 
@@ -225,21 +225,21 @@ impl Middleware<ConnAux, rimu_ws::Error> for ServerHeader {
         _: &mut ConnAux,
         _: &mut Self::Aux,
         res: Response<&mut MsgBufferString>,
-    ) -> rimu_ws::Result<ControlFlow<StatusCode, ()>> {
+    ) -> nyseion_ws::Result<ControlFlow<StatusCode, ()>> {
         res
             .msg_data
             .headers
-            .push_from_iter(Header::from_name_and_value(KnownHeaderName::Server.into(), ["rimu-ws"]))?;
+            .push_from_iter(Header::from_name_and_value(KnownHeaderName::Server.into(), ["nyseion-ws"]))?;
         Ok(ControlFlow::Continue(()))
     }
 }
 
-#[derive(Clone, rimu_ws::Lease)]
+#[derive(Clone, nyseion_ws::Lease)]
 struct ConnAux {
     dataset: Arc<VectorUsize<DatasetItem>>,
 }
 
-async fn endpoint_baseline2(state: State<'_, ConnAux>) -> rimu_ws::Result<VerbatimParams> {
+async fn endpoint_baseline2(state: State<'_, ConnAux>) -> nyseion_ws::Result<VerbatimParams> {
     let mut sum: i64 = 0;
     for (_, value) in state.req.msg_data.uri.query_params() {
         sum = sum.wrapping_add(value.parse()?);
@@ -256,7 +256,7 @@ async fn endpoint_baseline2(state: State<'_, ConnAux>) -> rimu_ws::Result<Verbat
 async fn endpoint_json(
     state: State<'_, ConnAux>,
     Path(count): Path<usize>,
-) -> rimu_ws::Result<JsonReply> {
+) -> nyseion_ws::Result<JsonReply> {
     let mut m: i64 = 1;
     for (key, value) in state.req.msg_data.uri.query_params() {
         if key == "m" {
@@ -278,7 +278,7 @@ fn write_json(
     dataset: &[DatasetItem],
     count: usize,
     m: i64,
-) -> rimu_ws::Result<()> {
+) -> nyseion_ws::Result<()> {
     let clamped = count.min(dataset.len());
     let mut w = JsonWriter::new(buf);
     // Every item and tag is written with a trailing comma; `end_seq` turns the last one into the
