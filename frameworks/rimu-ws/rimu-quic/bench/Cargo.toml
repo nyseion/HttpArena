@@ -1,0 +1,18 @@
+[package]
+name = "rimu-quic-bench"
+publish = false
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+rimu-quic = { path = "../rimu-quic", features = ["__bench"] }
+rimu-h3 = { path = "../rimu-h3", features = ["__bench"] }
+
+[[bin]]
+name = "rimu-quic-bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "rimu-h3-bench"
+path = "src/h3.rs"

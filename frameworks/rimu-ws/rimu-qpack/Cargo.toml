@@ -1,0 +1,38 @@
+[package]
+name = "rimu-qpack"
+description = "Sans-IO QPACK (RFC 9204) field compression for HTTP/3: a hardened decoder with a replay memo, and a dynamic-table encoder."
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+rust-version = "1.89"
+keywords = ["qpack", "http3", "quic", "rfc9204", "no_std"]
+categories = ["network-programming", "compression", "no-std"]
+exclude = ["/fuzz", "/interop"]
+
+[dependencies]
+
+[features]
+default = ["std"]
+# Links std. The crate is complete without it (`Error` implements `core::error::Error`).
+std = []
+# Exposes the model checker and wire writers for the fuzz targets. Not a public API.
+__check = []
+
+[[bench]]
+name = "qpack"
+harness = false
+
+[workspace]
+members = [".", "interop"]
+default-members = ["."]
+resolver = "3"
+
+[profile.bench]
+codegen-units = 1
+lto = "fat"
+debug = "line-tables-only"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+debug = "line-tables-only"

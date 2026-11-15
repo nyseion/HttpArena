@@ -1,0 +1,47 @@
+[package]
+name = "rimu-h3"
+description = "A sans-I/O HTTP/3 server (RFC 9114) on rimu-quic and rimu-qpack."
+keywords = ["http3", "quic", "qpack", "sans-io", "server"]
+categories = ["network-programming", "web-programming::http-server", "no-std"]
+readme = "README.md"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["std", "rustls", "ring"]
+## The standard library: the `date` of responses from the system clock (`H3Server::refresh_date`).
+std = ["rimu-quic/std", "rimu-qpack/std"]
+## rimu-quic's TLS through rustls.
+rustls = ["rimu-quic/rustls", "std"]
+## rimu-quic's ring crypto backend.
+ring = ["rimu-quic/ring"]
+## rimu-quic's aws-lc-rs crypto backend.
+aws-lc-rs = ["rimu-quic/aws-lc-rs"]
+## A ready-to-run server on rimu-quic's io_uring driver (`uring`, Linux 6.1 or later).
+uring = ["rimu-quic/uring", "rustls"]
+## The in-process harness and the connection checker, for the fuzz target. Not a public API.
+__fuzz = ["rimu-quic/client", "rustls"]
+## Exposes the request decode and response encode paths to `bench/`. Not a public API.
+__bench = ["std"]
+
+[dependencies]
+# rimu-qpack at e5bbbad (14 Nov 2026)
+rimu-qpack = { path = "../../rimu-qpack", default-features = false }
+rimu-quic = { path = "../rimu-quic", default-features = false }
+
+[dev-dependencies]
+rimu-qpack = { path = "../../rimu-qpack", default-features = false, features = ["__check"] }
+rimu-quic = { path = "../rimu-quic", default-features = false, features = ["client"] }
+
+[[example]]
+name = "hello_server"
+required-features = ["rustls"]
+
+[[example]]
+name = "uring_server"
+required-features = ["uring"]
+
+[package.metadata.docs.rs]
+features = ["std", "rustls", "ring"]
