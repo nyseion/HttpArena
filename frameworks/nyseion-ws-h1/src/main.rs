@@ -218,10 +218,10 @@ fn endpoint_json(_: &mut (), req: &Http1Req<'_>, res: &mut Http1Res) -> nyseion_
   let count: usize = req.param("count").unwrap_or("0").parse()?;
   let m = query_m(req.query())?;
   let dataset = DATASET.get().map_or(&[][..], |el| el.as_slice());
-  let accepts = req.headers().iter().filter(|el| el.0.eq_ignore_ascii_case("accept-encoding"));
+  let accepts = req.headers().iter().filter(|el| el.name.eq_ignore_ascii_case("accept-encoding"));
   // The response depends on `Accept-Encoding`, so every one says so (RFC 9110 §12.5.5)
   res.push_header("vary", "Accept-Encoding")?;
-  let Some(encoding) = choose_encoding(accepts.map(|el| el.1)) else {
+  let Some(encoding) = choose_encoding(accepts.map(|el| el.value)) else {
     res.body_mut().extend_from_slice(b"no acceptable content coding");
     res.set_content_type("text/plain");
     res.set_status(StatusCode::NotAcceptable);
@@ -289,39 +289,40 @@ fn write_json(
   let mut w = JsonWriter::new(buf);
   // Every item and tag is written with a trailing comma; `end_seq` turns the last one into the
   // closing bracket.
-  w.raw(b"{\"items\":[")?;
+  w.raw("{\"items\":[");
   for el in dataset.iter().take(clamped) {
-    w.raw(b"{\"id\":")?;
-    w.i64(el.id)?;
-    w.raw(b",\"name\":\"")?;
-    w.str_contents(&el.name)?;
-    w.raw(b"\",\"category\":\"")?;
-    w.str_contents(&el.category)?;
-    w.raw(b"\",\"price\":")?;
-    w.i64(el.price)?;
-    w.raw(b",\"quantity\":")?;
-    w.i64(el.quantity)?;
-    w.raw(b",\"active\":")?;
-    w.bool(el.active)?;
-    w.raw(b",\"tags\":[")?;
+    w.raw("{\"id\":");
+    w.i64(el.id);
+    w.raw(",\"name\":\"");
+    w.str_contents(&el.name);
+    w.raw("\",\"category\":\"");
+    w.str_contents(&el.category);
+    w.raw("\",\"price\":");
+    w.i64(el.price);
+    w.raw(",\"quantity\":");
+    w.i64(el.quantity);
+    w.raw(",\"active\":");
+    w.bool(el.active);
+    w.raw(",\"tags\":[");
     for tag in el.tags.iter() {
-      w.raw(b"\"")?;
-      w.str_contents(tag)?;
-      w.raw(b"\",")?;
+      w.raw("\"");
+      w.str_contents(tag);
+      w.raw("\",");
     }
-    w.end_seq(b']')?;
-    w.raw(b",\"rating\":{\"score\":")?;
-    w.i64(el.rating.score)?;
-    w.raw(b",\"count\":")?;
-    w.i64(el.rating.count)?;
-    w.raw(b"},\"total\":")?;
-    w.i64(el.price.wrapping_mul(el.quantity).wrapping_mul(m))?;
-    w.raw(b"},")?;
+    w.end_seq(b']');
+    w.raw(",\"rating\":{\"score\":");
+    w.i64(el.rating.score);
+    w.raw(",\"count\":");
+    w.i64(el.rating.count);
+    w.raw("},\"total\":");
+    w.i64(el.price.wrapping_mul(el.quantity).wrapping_mul(m));
+    w.raw("},");
   }
-  w.end_seq(b']')?;
-  w.raw(b",\"count\":")?;
-  w.u64(u64::try_from(clamped).unwrap_or(u64::MAX))?;
-  w.raw(b"}")
+  w.end_seq(b']');
+  w.raw(",\"count\":");
+  w.u64(u64::try_from(clamped).unwrap_or(u64::MAX));
+  w.raw("}");
+  Ok(())
 }
 
 fn load_dataset() -> VectorUsize<DatasetItem> {
@@ -445,14 +446,11 @@ fn encode(encoding: Encoding, input: &[u8], out: &mut Vec<u8>) -> std::io::Resul
       )?;
     }
     Encoding::Gzip => {
-      let thread = GZIP
-        .try_with(|cell| cell.borrow_mut().get_or_insert_with(GzipEncoder::new).encode(input, out));
-      match thread {
-        Ok(rslt) => rslt.map_err(|_| std::io::Error::other("gzip failed"))?,
+      let thread =
+        GZIP.try_with(|cell| cell.borrow_mut().get_or_insert_with(GzipEncoder::new).gzip(input, out));
+      if thread.is_err() {
         // The thread is being torn down: an encoder of this response's own
-        Err(_) => {
-          GzipEncoder::new().encode(input, out).map_err(|_| std::io::Error::other("gzip failed"))?
-        }
+        GzipEncoder::new().gzip(input, out);
       }
     }
     Encoding::Identity => out.extend_from_slice(input),
@@ -840,8 +838,24 @@ mod tests {
     encode(Encoding::Gzip, json.as_slice(), &mut out).unwrap();
     assert_eq!(ungzip(&out), json.as_slice());
     let mut fresh = Vec::new();
-    nyseion_ws::codec::GzipEncoder::new().encode(json.as_slice(), &mut fresh).unwrap();
+    nyseion_ws::codec::GzipEncoder::new().gzip(json.as_slice(), &mut fresh);
     assert_eq!(out.len(), fresh.len());
+  }
+
+  /// The json-comp profile's three bodies (`/json/25?m=4`, `/json/40?m=8`, `/json/50?m=6`) are no
+  /// larger in gzip than the in-tree encoder made them (958 / 1,313 / 1,544 bytes,
+  /// `docs/benchmarks/2026-11-11-json-comp-sweep`).
+  #[test]
+  fn json_comp_bodies_do_not_grow() {
+    let dataset = test_dataset();
+    for (count, m, bound) in [(25, 4, 958), (40, 8, 1_313), (50, 6, 1_544)] {
+      let mut json = VectorUsize::new();
+      write_json(&mut json, &dataset, count, m).unwrap();
+      let mut out = Vec::new();
+      encode(Encoding::Gzip, json.as_slice(), &mut out).unwrap();
+      assert_eq!(ungzip(&out), json.as_slice());
+      assert!(out.len() <= bound, "/json/{count}?m={m}: {} bytes, more than {bound}", out.len());
+    }
   }
 
   /// Inputs of several sizes, the larger ones less compressible, for the reuse tests.
@@ -870,7 +884,7 @@ mod tests {
       for input in reuse_inputs() {
         encode(Encoding::Gzip, &input, &mut out).unwrap();
         let mut fresh = Vec::new();
-        GzipEncoder::new().encode(&input, &mut fresh).unwrap();
+        GzipEncoder::new().gzip(&input, &mut fresh);
         assert_eq!(out, fresh, "{} bytes", input.len());
         assert_eq!(ungzip(&out), input);
       }
